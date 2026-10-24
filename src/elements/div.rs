@@ -2821,7 +2821,10 @@ impl Interactivity {
                     | accesskit::Role::TreeItem
             )
         );
-        if pressable_role || !self.click_listeners.is_empty() || !self.mouse_down_listeners.is_empty() {
+        if pressable_role
+            || !self.click_listeners.is_empty()
+            || !self.mouse_down_listeners.is_empty()
+        {
             node.add_action(accesskit::Action::Click);
         }
         if self.tracked_focus_handle.is_some() || self.focusable {

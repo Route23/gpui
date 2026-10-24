@@ -66,7 +66,6 @@ mod seal {
 }
 
 pub use accesskit;
-pub use window::a11y::{accessibility_enabled, set_accessibility_enabled};
 pub use accesskit::Action as AccessibleAction;
 pub use accesskit::{Orientation, Role, Toggled};
 pub use action::*;
@@ -109,6 +108,7 @@ pub use text_system::*;
 pub use util::smol_timeout;
 pub use util::{FutureExt, Timeout, arc_cow::ArcCow};
 pub use view::*;
+pub use window::a11y::{accessibility_enabled, set_accessibility_enabled};
 pub use window::*;
 
 use std::{any::Any, borrow::BorrowMut, future::Future};

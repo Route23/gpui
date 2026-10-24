@@ -1518,11 +1518,14 @@ impl PlatformWindow for MacWindow {
         let view = lock.native_view.as_ptr() as *mut c_void;
         let is_focused = unsafe { lock.native_window.isKeyWindow() == YES };
         // SAFETY: 生きている GPUIView。メインスレッド。
-        let adapter =
-            unsafe { accesskit_macos::Adapter::new(view, is_focused, A11yActionHandler(callbacks.action)) };
+        let adapter = unsafe {
+            accesskit_macos::Adapter::new(view, is_focused, A11yActionHandler(callbacks.action))
+        };
         lock.accesskit = Some(MacA11y {
             adapter,
-            activation: A11yActivationHandler { callback: callbacks.activation },
+            activation: A11yActivationHandler {
+                callback: callbacks.activation,
+            },
         });
     }
 
@@ -1530,7 +1533,9 @@ impl PlatformWindow for MacWindow {
         // 知らせ（`raise`）は錠を放してから —— 知らせを受けた AppKit が、そのまま GPUIView の子を訊きに来る。
         let events = {
             let mut lock = self.0.lock();
-            lock.accesskit.as_mut().and_then(|a| a.adapter.update_if_active(|| tree_update))
+            lock.accesskit
+                .as_mut()
+                .and_then(|a| a.adapter.update_if_active(|| tree_update))
         };
         if let Some(events) = events {
             events.raise();
@@ -2054,7 +2059,9 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 
     let a11y_events = {
         let mut lock = window_state.lock();
-        lock.accesskit.as_mut().and_then(|a| a.adapter.update_view_focus_state(is_active))
+        lock.accesskit
+            .as_mut()
+            .and_then(|a| a.adapter.update_view_focus_state(is_active))
     };
     if let Some(events) = a11y_events {
         events.raise();
@@ -2714,7 +2721,6 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
     }
 }
 
-
 // ── AccessKit（dopamine #1284）─────────────────────────────────────────────
 
 struct A11yActivationHandler {
@@ -2760,7 +2766,10 @@ extern "C" fn accessibility_children(this: &Object, _: Sel) -> id {
         let state = get_window_state(this);
         let nodes: Option<id> = state.try_lock().and_then(|mut lock| {
             lock.accesskit.as_mut().map(|a| {
-                let MacA11y { adapter, activation } = a;
+                let MacA11y {
+                    adapter,
+                    activation,
+                } = a;
                 adapter.view_children(activation) as id
             })
         });
@@ -2784,7 +2793,10 @@ extern "C" fn accessibility_focused_ui_element(this: &Object, _: Sel) -> id {
         let state = get_window_state(this);
         let focused: Option<id> = state.try_lock().and_then(|mut lock| {
             lock.accesskit.as_mut().map(|a| {
-                let MacA11y { adapter, activation } = a;
+                let MacA11y {
+                    adapter,
+                    activation,
+                } = a;
                 adapter.focus(activation) as id
             })
         });
@@ -2816,7 +2828,10 @@ extern "C" fn accessibility_hit_test(this: &Object, _: Sel, point: NSPoint) -> i
         let state = get_window_state(this);
         let hit: Option<id> = state.try_lock().and_then(|mut lock| {
             lock.accesskit.as_mut().map(|a| {
-                let MacA11y { adapter, activation } = a;
+                let MacA11y {
+                    adapter,
+                    activation,
+                } = a;
                 adapter.hit_test(accesskit_macos::NSPoint::new(point.x, point.y), activation) as id
             })
         });

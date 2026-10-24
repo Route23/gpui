@@ -263,7 +263,9 @@ impl WindowsPlatform {
                     let simulated = match (simulate_at, simulate_every) {
                         (Some(at), Some(every)) if std::time::Instant::now() >= at => {
                             simulate_at = Some(at + every);
-                            log::warn!("simulating a DirectX device lost (GPUI_SIMULATE_DEVICE_LOST_SECS)");
+                            log::warn!(
+                                "simulating a DirectX device lost (GPUI_SIMULATE_DEVICE_LOST_SECS)"
+                            );
                             true
                         }
                         _ => false,

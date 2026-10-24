@@ -257,7 +257,6 @@ impl A11yNodeBuilder {
     }
 
     fn finalize(&mut self) -> TreeUpdate {
-
         // Pop remaining nodes (should just be the root).
         while !self.ids_stack.is_empty() {
             if let (Some(id), Some(node)) = (self.ids_stack.pop(), self.nodes_stack.pop()) {

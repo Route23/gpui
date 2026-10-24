@@ -1152,57 +1152,45 @@ impl Window {
         platform_window.on_resize(Box::new({
             let mut cx = cx.to_async();
             move |_, _| {
-                handle
-                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .log_err();
+                update_window_or_retry(handle, &mut cx, |window, cx| window.bounds_changed(cx))
             }
         }));
         platform_window.on_moved(Box::new({
             let mut cx = cx.to_async();
-            move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.bounds_changed(cx))
-                    .log_err();
-            }
+            move || update_window_or_retry(handle, &mut cx, |window, cx| window.bounds_changed(cx))
         }));
         platform_window.on_appearance_changed(Box::new({
             let mut cx = cx.to_async();
             move || {
-                handle
-                    .update(&mut cx, |_, window, cx| window.appearance_changed(cx))
-                    .log_err();
+                update_window_or_retry(handle, &mut cx, |window, cx| window.appearance_changed(cx))
             }
         }));
         platform_window.on_active_status_change(Box::new({
             let mut cx = cx.to_async();
             move |active| {
-                handle
-                    .update(&mut cx, |_, window, cx| {
-                        window.active.set(active);
-                        window.modifiers = window.platform_window.modifiers();
-                        window.capslock = window.platform_window.capslock();
-                        window
-                            .activation_observers
-                            .clone()
-                            .retain(&(), |callback| callback(window, cx));
+                update_window_or_retry(handle, &mut cx, move |window, cx| {
+                    window.active.set(active);
+                    window.modifiers = window.platform_window.modifiers();
+                    window.capslock = window.platform_window.capslock();
+                    window
+                        .activation_observers
+                        .clone()
+                        .retain(&(), |callback| callback(window, cx));
 
-                        window.bounds_changed(cx);
-                        window.refresh();
+                    window.bounds_changed(cx);
+                    window.refresh();
 
-                        SystemWindowTabController::update_last_active(cx, window.handle.id);
-                    })
-                    .log_err();
+                    SystemWindowTabController::update_last_active(cx, window.handle.id);
+                });
             }
         }));
         platform_window.on_hover_status_change(Box::new({
             let mut cx = cx.to_async();
             move |active| {
-                handle
-                    .update(&mut cx, |_, window, _| {
-                        window.hovered.set(active);
-                        window.refresh();
-                    })
-                    .log_err();
+                update_window_or_retry(handle, &mut cx, move |window, _| {
+                    window.hovered.set(active);
+                    window.refresh();
+                })
             }
         }));
         platform_window.on_input({
@@ -5291,4 +5279,26 @@ pub fn outline(
         border_color: border_color.into(),
         border_style,
     }
+}
+
+/// 窓の知らせ（動いた・大きさ・外観・前面・ホバー）を受ける。App を借りられなければ —— 借りている最中に OS がその場で
+/// 送ってきた（Windows の `SetWindowPos` → `WM_SIZE` / `WM_MOVE`、mac の `setFrame:` → `windowDidResize:`）——
+/// 借りが返ってから 1 回だけやり直す。前は捨てていた（`log_err` で `RefCell already borrowed` を出すだけ / Route23/dopamine#1295）。
+/// どの知らせも「いまの状態を読み直す」ものなので、遅らせても正しい。
+fn update_window_or_retry(
+    handle: AnyWindowHandle,
+    cx: &mut crate::AsyncApp,
+    f: impl Fn(&mut Window, &mut App) + 'static,
+) {
+    if handle.update(cx, |_, window, cx| f(window, cx)).is_ok() {
+        return;
+    }
+    let mut later = cx.clone();
+    cx.foreground_executor()
+        .spawn(async move {
+            handle
+                .update(&mut later, |_, window, cx| f(window, cx))
+                .log_err();
+        })
+        .detach();
 }
