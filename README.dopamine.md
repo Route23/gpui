@@ -9,3 +9,4 @@
 | 直し | 上流 |
 |---|---|
 | 画面の構成が変わったとき、`screen` が nil の窓で `display_id_for_screen` を撃って落ちない | zed-industries/zed#60419 |
+| アクセシビリティの木（AccessKit）。要素に `.role()` / `.aria_label()` などを付けると、VoiceOver が読み・押せる。**既定 off**（`gpui::set_accessibility_enabled(true)` を窓を作る前に呼んだときだけ）。mac は `GPUIView` に `accesskit_macos::Adapter` を付け、子にネイティブの subview（WKWebView）も残す | zed-industries/zed#56065（mac の部分は 0.2.2 の一枚岩の `platform/mac/window.rs` に合わせて書き直し。`Text` 要素の分は外した） |

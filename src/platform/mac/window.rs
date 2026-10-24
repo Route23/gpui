@@ -249,6 +249,22 @@ unsafe fn build_classes() {
                     sel!(characterIndexForPoint:),
                     character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
                 );
+
+                // AccessKit（dopamine #1284）。窓ごと差し替える `SubclassingAdapter::for_window` は使わない —— 中身の
+                // view の子を AccessKit のノードだけにして、子の NSView（WKWebView）が VoiceOver から見えなくなる。
+                // GPUIView にこの 3 つを書き、AccessKit のノードの後ろに子の view を足す。切れているときは NSView のまま。
+                decl.add_method(
+                    sel!(accessibilityChildren),
+                    accessibility_children as extern "C" fn(&Object, Sel) -> id,
+                );
+                decl.add_method(
+                    sel!(accessibilityFocusedUIElement),
+                    accessibility_focused_ui_element as extern "C" fn(&Object, Sel) -> id,
+                );
+                decl.add_method(
+                    sel!(accessibilityHitTest:),
+                    accessibility_hit_test as extern "C" fn(&Object, Sel, NSPoint) -> id,
+                );
             }
             decl.register()
         };
@@ -419,6 +435,14 @@ struct MacWindowState {
     select_previous_tab_callback: Option<Box<dyn FnMut()>>,
     toggle_tab_bar_callback: Option<Box<dyn FnMut()>>,
     activated_least_once: bool,
+    /// AccessKit（dopamine #1284）。`a11y_init` で作る（gpui の側で切っていれば作らない）。
+    accesskit: Option<MacA11y>,
+}
+
+/// AccessKit の Adapter と、最初の木を求める口。
+struct MacA11y {
+    adapter: accesskit_macos::Adapter,
+    activation: A11yActivationHandler,
 }
 
 impl MacWindowState {
@@ -731,6 +755,7 @@ impl MacWindow {
                 select_previous_tab_callback: None,
                 toggle_tab_bar_callback: None,
                 activated_least_once: false,
+                accesskit: None,
             })));
 
             (*native_window).set_ivar(
@@ -1488,6 +1513,30 @@ impl PlatformWindow for MacWindow {
         None
     }
 
+    fn a11y_init(&self, callbacks: crate::A11yCallbacks) {
+        let mut lock = self.0.lock();
+        let view = lock.native_view.as_ptr() as *mut c_void;
+        let is_focused = unsafe { lock.native_window.isKeyWindow() == YES };
+        // SAFETY: 生きている GPUIView。メインスレッド。
+        let adapter =
+            unsafe { accesskit_macos::Adapter::new(view, is_focused, A11yActionHandler(callbacks.action)) };
+        lock.accesskit = Some(MacA11y {
+            adapter,
+            activation: A11yActivationHandler { callback: callbacks.activation },
+        });
+    }
+
+    fn a11y_tree_update(&self, tree_update: accesskit::TreeUpdate) {
+        // 知らせ（`raise`）は錠を放してから —— 知らせを受けた AppKit が、そのまま GPUIView の子を訊きに来る。
+        let events = {
+            let mut lock = self.0.lock();
+            lock.accesskit.as_mut().and_then(|a| a.adapter.update_if_active(|| tree_update))
+        };
+        if let Some(events) = events {
+            events.raise();
+        }
+    }
+
     fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
         let executor = self.0.lock().executor.clone();
         executor
@@ -2002,6 +2051,14 @@ extern "C" fn window_did_change_key_status(this: &Object, selector: Sel, _: id) 
 
     let executor = lock.executor.clone();
     drop(lock);
+
+    let a11y_events = {
+        let mut lock = window_state.lock();
+        lock.accesskit.as_mut().and_then(|a| a.adapter.update_view_focus_state(is_active))
+    };
+    if let Some(events) = a11y_events {
+        events.raise();
+    }
 
     // When a window becomes active, trigger an immediate synchronous frame request to prevent
     // tab flicker when switching between windows in native tabs mode.
@@ -2653,6 +2710,119 @@ extern "C" fn toggle_tab_bar(this: &Object, _sel: Sel, _id: id) {
             drop(lock);
             callback();
             window_state.lock().toggle_tab_bar_callback = Some(callback);
+        }
+    }
+}
+
+
+// ── AccessKit（dopamine #1284）─────────────────────────────────────────────
+
+struct A11yActivationHandler {
+    callback: Box<dyn Fn() -> Option<accesskit::TreeUpdate> + Send + 'static>,
+}
+
+impl accesskit::ActivationHandler for A11yActivationHandler {
+    fn request_initial_tree(&mut self) -> Option<accesskit::TreeUpdate> {
+        (self.callback)()
+    }
+}
+
+struct A11yActionHandler(Box<dyn Fn(accesskit::ActionRequest) + Send + 'static>);
+
+impl accesskit::ActionHandler for A11yActionHandler {
+    fn do_action(&mut self, request: accesskit::ActionRequest) {
+        (self.0)(request);
+    }
+}
+
+/// 表に出ている子の view（WKWebView など）。後ろのもの（上に描かれるもの）が先。
+unsafe fn shown_subviews(this: &Object) -> Vec<id> {
+    unsafe {
+        let subviews: id = msg_send![this, subviews];
+        if subviews.is_null() {
+            return Vec::new();
+        }
+        let n: u64 = msg_send![subviews, count];
+        let mut out = Vec::new();
+        for i in (0..n).rev() {
+            let v: id = msg_send![subviews, objectAtIndex: i];
+            let hidden: BOOL = msg_send![v, isHiddenOrHasHiddenAncestor];
+            if hidden == NO {
+                out.push(v);
+            }
+        }
+        out
+    }
+}
+
+extern "C" fn accessibility_children(this: &Object, _: Sel) -> id {
+    unsafe {
+        let state = get_window_state(this);
+        let nodes: Option<id> = state.try_lock().and_then(|mut lock| {
+            lock.accesskit.as_mut().map(|a| {
+                let MacA11y { adapter, activation } = a;
+                adapter.view_children(activation) as id
+            })
+        });
+        let Some(nodes) = nodes else {
+            return msg_send![super(this, class!(NSView)), accessibilityChildren];
+        };
+        let out: id = msg_send![class!(NSMutableArray), array];
+        if !nodes.is_null() {
+            let _: () = msg_send![out, addObjectsFromArray: nodes];
+        }
+        // 子の view（WKWebView）。VoiceOver はそこからページの中身（WebContent プロセス）へ入る。
+        for v in shown_subviews(this).into_iter().rev() {
+            let _: () = msg_send![out, addObject: v];
+        }
+        out
+    }
+}
+
+extern "C" fn accessibility_focused_ui_element(this: &Object, _: Sel) -> id {
+    unsafe {
+        let state = get_window_state(this);
+        let focused: Option<id> = state.try_lock().and_then(|mut lock| {
+            lock.accesskit.as_mut().map(|a| {
+                let MacA11y { adapter, activation } = a;
+                adapter.focus(activation) as id
+            })
+        });
+        match focused {
+            Some(f) if !f.is_null() => f,
+            _ => msg_send![super(this, class!(NSView)), accessibilityFocusedUIElement],
+        }
+    }
+}
+
+extern "C" fn accessibility_hit_test(this: &Object, _: Sel, point: NSPoint) -> id {
+    unsafe {
+        // 子の view（WKWebView）の上なら、そちらに訊く。`point` は画面の座標。
+        let window: id = msg_send![this, window];
+        if !window.is_null() {
+            let in_window: NSPoint = msg_send![window, convertPointFromScreen: point];
+            for v in shown_subviews(this) {
+                let frame: NSRect = msg_send![v, frame];
+                let local: NSPoint = msg_send![this, convertPoint: in_window fromView: nil];
+                let inside = local.x >= frame.origin.x
+                    && local.x < frame.origin.x + frame.size.width
+                    && local.y >= frame.origin.y
+                    && local.y < frame.origin.y + frame.size.height;
+                if inside {
+                    return msg_send![v, accessibilityHitTest: point];
+                }
+            }
+        }
+        let state = get_window_state(this);
+        let hit: Option<id> = state.try_lock().and_then(|mut lock| {
+            lock.accesskit.as_mut().map(|a| {
+                let MacA11y { adapter, activation } = a;
+                adapter.hit_test(accesskit_macos::NSPoint::new(point.x, point.y), activation) as id
+            })
+        });
+        match hit {
+            Some(h) if !h.is_null() => h,
+            _ => msg_send![super(this, class!(NSView)), accessibilityHitTest: point],
         }
     }
 }

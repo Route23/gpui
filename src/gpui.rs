@@ -65,6 +65,10 @@ mod seal {
     pub trait Sealed {}
 }
 
+pub use accesskit;
+pub use window::a11y::{accessibility_enabled, set_accessibility_enabled};
+pub use accesskit::Action as AccessibleAction;
+pub use accesskit::{Orientation, Role, Toggled};
 pub use action::*;
 pub use anyhow::Result;
 pub use app::*;

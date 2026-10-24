@@ -228,6 +228,9 @@ path = "examples/window_shadow.rs"
 name = "action_macros"
 path = "tests/action_macros.rs"
 
+[dependencies.accesskit]
+version = "0.24.0"
+
 [dependencies.anyhow]
 version = "1.0.86"
 
@@ -588,6 +591,9 @@ version = "0.0.8-zed"
 optional = true
 default-features = false
 package = "zed-scap"
+
+[target.'cfg(target_os = "macos")'.dependencies.accesskit_macos]
+version = "0.26.0"
 
 [target.'cfg(target_os = "macos")'.dependencies.block]
 version = "0.1"
