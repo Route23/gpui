@@ -247,9 +247,30 @@ impl WindowsPlatform {
             .name("VSyncProvider".to_owned())
             .spawn(move || {
                 let vsync_provider = VSyncProvider::new();
+                // 試すための引き金（debug だけ / Route23/dopamine#1133）: `GPUI_SIMULATE_DEVICE_LOST_SECS=N` なら、
+                // 起動から N 秒ごとに「デバイスを失った」ことにして作り直しの道を走らせる。
+                #[cfg(debug_assertions)]
+                let simulate_every = std::env::var("GPUI_SIMULATE_DEVICE_LOST_SECS")
+                    .ok()
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .filter(|s| *s > 0)
+                    .map(std::time::Duration::from_secs);
+                #[cfg(debug_assertions)]
+                let mut simulate_at = simulate_every.map(|d| std::time::Instant::now() + d);
                 loop {
                     vsync_provider.wait_for_vsync();
-                    if check_device_lost(&directx_device.device) {
+                    #[cfg(debug_assertions)]
+                    let simulated = match (simulate_at, simulate_every) {
+                        (Some(at), Some(every)) if std::time::Instant::now() >= at => {
+                            simulate_at = Some(at + every);
+                            log::warn!("simulating a DirectX device lost (GPUI_SIMULATE_DEVICE_LOST_SECS)");
+                            true
+                        }
+                        _ => false,
+                    };
+                    #[cfg(not(debug_assertions))]
+                    let simulated = false;
+                    if simulated || check_device_lost(&directx_device.device) {
                         handle_gpu_device_lost(
                             &mut directx_device,
                             platform_window.as_raw(),
