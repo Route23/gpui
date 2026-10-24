@@ -1057,6 +1057,18 @@ pub trait StatefulInteractiveElement: InteractiveElement {
         self
     }
 
+    /// Set the accessible value (the text a screen reader reads after the label, e.g. a field's contents).
+    fn aria_value(mut self, value: impl Into<SharedString>) -> Self {
+        self.interactivity().aria_value = Some(value.into());
+        self
+    }
+
+    /// Set the accessible description (read after a pause, e.g. a setting's explanation).
+    fn aria_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.interactivity().aria_description = Some(description.into());
+        self
+    }
+
     /// Set the selected state for this element.
     fn aria_selected(mut self, selected: bool) -> Self {
         self.interactivity().aria_selected = Some(selected);
@@ -1660,6 +1672,8 @@ pub struct Interactivity {
         Vec<(accesskit::Action, crate::window::a11y::A11yActionListener)>,
     pub(crate) override_role: Option<accesskit::Role>,
     pub(crate) aria_label: Option<SharedString>,
+    pub(crate) aria_value: Option<SharedString>,
+    pub(crate) aria_description: Option<SharedString>,
     pub(crate) aria_selected: Option<bool>,
     pub(crate) aria_expanded: Option<bool>,
     pub(crate) aria_toggled: Option<accesskit::Toggled>,
@@ -2740,6 +2754,12 @@ impl Interactivity {
         if let Some(label) = &self.aria_label {
             node.set_label(label.to_string());
         }
+        if let Some(value) = &self.aria_value {
+            node.set_value(value.to_string());
+        }
+        if let Some(description) = &self.aria_description {
+            node.set_description(description.to_string());
+        }
         if let Some(selected) = self.aria_selected {
             node.set_selected(selected);
         }
@@ -2784,7 +2804,24 @@ impl Interactivity {
         }
         // mouse-down で押しを受ける部品も「押せる」（dopamine #1285 —— dopamine のボタンは mouse-down で動く）。
         // 押されたら `Window::handle_a11y_action` が真ん中を押す（mouse-down / up を配る）。
-        if !self.click_listeners.is_empty() || !self.mouse_down_listeners.is_empty() {
+        // 押せる役割（スイッチ・タブ…）は、自分で受けなくても「押せる」—— 真ん中を押せば、受けている祖先へ届く
+        // （dopamine #1286 —— 設定のカードは行が押しを受け、中のスイッチは絵だけ）。
+        let pressable_role = matches!(
+            self.override_role,
+            Some(
+                accesskit::Role::Button
+                    | accesskit::Role::Switch
+                    | accesskit::Role::CheckBox
+                    | accesskit::Role::RadioButton
+                    | accesskit::Role::Tab
+                    | accesskit::Role::MenuItem
+                    | accesskit::Role::Link
+                    | accesskit::Role::ComboBox
+                    | accesskit::Role::ListBoxOption
+                    | accesskit::Role::TreeItem
+            )
+        );
+        if pressable_role || !self.click_listeners.is_empty() || !self.mouse_down_listeners.is_empty() {
             node.add_action(accesskit::Action::Click);
         }
         if self.tracked_focus_handle.is_some() || self.focusable {

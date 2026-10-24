@@ -10,3 +10,4 @@
 |---|---|
 | 画面の構成が変わったとき、`screen` が nil の窓で `display_id_for_screen` を撃って落ちない | zed-industries/zed#60419 |
 | アクセシビリティの木（AccessKit）。要素に `.role()` / `.aria_label()` などを付けると、VoiceOver が読み・押せる。**既定 off**（`gpui::set_accessibility_enabled(true)` を窓を作る前に呼んだときだけ）。mac は `GPUIView` に `accesskit_macos::Adapter` を付け、子にネイティブの subview（WKWebView）も残す | zed-industries/zed#56065（mac の部分は 0.2.2 の一枚岩の `platform/mac/window.rs` に合わせて書き直し。`Text` 要素の分は外した） |
+| アクセシビリティの木の続き: キャッシュしたビュー（`AnyView::cached`）は木を作っている間は使い回さない（使い回したフレームの中の要素が木から消える）・押せる役割（ボタン・スイッチ・タブ…）は自分で受けなくても「押せる」・`aria_value` / `aria_description` | dopamine の手当て（Route23/dopamine#1286） |
