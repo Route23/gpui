@@ -185,6 +185,31 @@ impl WrappedLine {
     }
 }
 
+/// The bounds of the layer a line is painted in. The layer's bounds decide the line's draw order (`BoundsTree`).
+/// Centered and right-aligned glyphs are painted away from `origin` (see `aligned_origin_x`), so cover the whole
+/// alignment width — otherwise something drawn later over the glyphs, but not over `origin..origin + width`, can get
+/// the same order as the text, and text sprites are drawn after quads of the same order: the text shows through
+/// (Route23/dopamine#1340).
+fn layer_bounds(
+    origin: Point<Pixels>,
+    line_width: Pixels,
+    height: Pixels,
+    align: TextAlign,
+    align_width: Option<Pixels>,
+) -> Bounds<Pixels> {
+    match (align, align_width) {
+        (TextAlign::Left, _) | (_, None) => Bounds::new(origin, size(line_width, height)),
+        (_, Some(align_width)) => {
+            // A line wider than the alignment width starts left of `origin`.
+            let left = (line_width - align_width).max(px(0.));
+            Bounds::new(
+                point(origin.x - left, origin.y),
+                size(align_width.max(line_width) + left, height),
+            )
+        }
+    }
+}
+
 fn paint_line(
     origin: Point<Pixels>,
     layout: &LineLayout,
@@ -196,12 +221,12 @@ fn paint_line(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
-    let line_bounds = Bounds::new(
+    let line_bounds = layer_bounds(
         origin,
-        size(
-            layout.width,
-            line_height * (wrap_boundaries.len() as f32 + 1.),
-        ),
+        layout.width,
+        line_height * (wrap_boundaries.len() as f32 + 1.),
+        align,
+        align_width,
     );
     window.paint_layer(line_bounds, |window| {
         let padding_top = (line_height - layout.ascent - layout.descent) / 2.;
@@ -433,12 +458,12 @@ fn paint_line_background(
     window: &mut Window,
     cx: &mut App,
 ) -> Result<()> {
-    let line_bounds = Bounds::new(
+    let line_bounds = layer_bounds(
         origin,
-        size(
-            layout.width,
-            line_height * (wrap_boundaries.len() as f32 + 1.),
-        ),
+        layout.width,
+        line_height * (wrap_boundaries.len() as f32 + 1.),
+        align,
+        align_width,
     );
     window.paint_layer(line_bounds, |window| {
         let mut decoration_runs = decoration_runs.iter();
@@ -587,5 +612,50 @@ fn aligned_origin_x(
         TextAlign::Left => origin.x,
         TextAlign::Center => (origin.x * 2.0 + align_width - line_width) / 2.0,
         TextAlign::Right => origin.x + align_width - line_width,
+    }
+}
+
+#[cfg(test)]
+mod layer_bounds_tests {
+    use super::*;
+
+    /// Where `aligned_origin_x` puts the glyphs of a line `line_width` wide (the same formula).
+    fn glyphs_x(
+        origin: Point<Pixels>,
+        align_width: Pixels,
+        align: TextAlign,
+        line_width: Pixels,
+    ) -> Pixels {
+        match align {
+            TextAlign::Left => origin.x,
+            TextAlign::Center => (origin.x * 2.0 + align_width - line_width) / 2.0,
+            TextAlign::Right => origin.x + align_width - line_width,
+        }
+    }
+
+    #[test]
+    fn centered_and_right_aligned_lines_cover_where_their_glyphs_are_painted() {
+        let origin = point(px(100.), px(10.));
+        let h = px(20.);
+        // Left (or no alignment width): just the text.
+        assert_eq!(
+            layer_bounds(origin, px(60.), h, TextAlign::Left, Some(px(400.))),
+            Bounds::new(origin, size(px(60.), h))
+        );
+        assert_eq!(
+            layer_bounds(origin, px(60.), h, TextAlign::Center, None),
+            Bounds::new(origin, size(px(60.), h))
+        );
+        // Center / right, narrower and wider than the alignment width: the layer covers the glyphs.
+        for align in [TextAlign::Center, TextAlign::Right] {
+            for line_width in [px(60.), px(500.)] {
+                let b = layer_bounds(origin, line_width, h, align, Some(px(400.)));
+                let x = glyphs_x(origin, px(400.), align, line_width);
+                assert!(
+                    b.origin.x <= x && x + line_width <= b.origin.x + b.size.width,
+                    "{align:?} {line_width:?}: {b:?} vs glyphs at {x:?}"
+                );
+            }
+        }
     }
 }
